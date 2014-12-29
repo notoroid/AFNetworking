@@ -549,6 +549,26 @@ extern NSTimeInterval const kAFUploadStream3GSuggestedDelay;
 
 /**
  Appends the HTTP header `Content-Disposition: file; filename=#{generated filename}; name=#{name}"` and `Content-Type: #{generated mimeType}`, followed by the encoded file data and the multipart form boundary.
+ 
+ @param fileURL The URL corresponding to the file whose content will be appended to the form. This parameter must not be `nil`.
+ @param name The name to be associated with the specified data. This parameter must not be `nil`.
+ @param error If an error occurs, upon return contains an `NSError` object that describes the problem.
+ 
+ @return `YES` if the file data was successfully appended, otherwise `NO`.
+ 
+ @discussion The filename and MIME type for this data in the form will be automatically generated, using `NSURLResponse` `-suggestedFilename` and `-MIMEType`, respectively.
+ */
+- (BOOL)appendPartWithFileURL:(NSURL *)fileURL
+                         name:(NSString *)name
+                        error:(NSError * __autoreleasing *)error;
+
+- (void)appendPartWithAssetRepresentation:(ALAssetRepresentation*)assetRepresentation
+                                     name:(NSString *)name
+                                 fileName:(NSString *)fileName
+                                 mimeType:(NSString *)mimeType;
+
+/**
+ Appends the HTTP header `Content-Disposition: file; filename=#{generated filename}; name=#{name}"` and `Content-Type: #{generated mimeType}`, followed by the encoded file data and the multipart form boundary.
 
  The filename and MIME type for this data in the form will be automatically generated, using the last path component of the `fileURL` and system associated MIME type for the `fileURL` extension, respectively.
  

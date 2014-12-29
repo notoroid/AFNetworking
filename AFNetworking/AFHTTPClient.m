@@ -21,6 +21,7 @@
 // THE SOFTWARE.
 
 #import <Foundation/Foundation.h>
+#import <AssetsLibrary/AssetsLibrary.h>
 
 #import "AFHTTPClient.h"
 #import "AFHTTPRequestOperation.h"
@@ -276,8 +277,8 @@ NSArray * AFQueryStringPairsFromKeyAndValue(NSString *key, id value) {
         if (![userAgent canBeConvertedToEncoding:NSASCIIStringEncoding]) {
             NSMutableString *mutableUserAgent = [userAgent mutableCopy];
             if (CFStringTransform((__bridge CFMutableStringRef)(mutableUserAgent), NULL, kCFStringTransformToLatin, false)) {
-                userAgent = mutableUserAgent;
-            }
+            userAgent = mutableUserAgent;
+        }
         }
         [self setDefaultHeader:@"User-Agent" value:userAgent];
     }
@@ -797,7 +798,14 @@ static inline NSString * AFContentTypeForPathExtension(NSString *extension) {
 NSUInteger const kAFUploadStream3GSuggestedPacketSize = 1024 * 16;
 NSTimeInterval const kAFUploadStream3GSuggestedDelay = 0.2;
 
+@class ALAssetRepresentation;
+
 @interface AFHTTPBodyPart : NSObject
+{
+    ALAssetRepresentation* _assetRepresentation;
+    long long _assetRepresentationRemainSize;
+}
+
 @property (nonatomic, assign) NSStringEncoding stringEncoding;
 @property (nonatomic, strong) NSDictionary *headers;
 @property (nonatomic, strong) id body;
@@ -810,6 +818,8 @@ NSTimeInterval const kAFUploadStream3GSuggestedDelay = 0.2;
 
 @property (nonatomic, readonly, getter = hasBytesAvailable) BOOL bytesAvailable;
 @property (nonatomic, readonly) unsigned long long contentLength;
+
+@property (nonatomic, strong) ALAssetRepresentation* assetRepresentation;
 
 - (NSInteger)read:(uint8_t *)buffer
         maxLength:(NSUInteger)length;
@@ -855,6 +865,25 @@ NSTimeInterval const kAFUploadStream3GSuggestedDelay = 0.2;
     self.bodyStream = [[AFMultipartBodyStream alloc] initWithStringEncoding:encoding];
 
     return self;
+}
+
+- (void)appendPartWithAssetRepresentation:(ALAssetRepresentation*)assetRepresentation
+                                     name:(NSString *)name
+                                 fileName:(NSString *)fileName
+                                 mimeType:(NSString *)mimeType
+{
+    NSMutableDictionary *mutableHeaders = [NSMutableDictionary dictionary];
+    [mutableHeaders setValue:[NSString stringWithFormat:@"form-data; name=\"%@\"; filename=\"%@\"", name, fileName] forKey:@"Content-Disposition"];
+    [mutableHeaders setValue:mimeType forKey:@"Content-Type"];
+    
+    AFHTTPBodyPart *bodyPart = [[AFHTTPBodyPart alloc] init];
+    bodyPart.stringEncoding = self.stringEncoding;
+    bodyPart.headers = mutableHeaders;
+    
+    bodyPart.bodyContentLength = [assetRepresentation size];
+    bodyPart.assetRepresentation = assetRepresentation;
+    
+    [self.bodyStream appendHTTPBodyPart:bodyPart];
 }
 
 - (BOOL)appendPartWithFileURL:(NSURL *)fileURL
@@ -1099,8 +1128,7 @@ NSTimeInterval const kAFUploadStream3GSuggestedDelay = 0.2;
             }
         }
     }
-#pragma clang diagnostic pop
-
+    
     return totalNumberOfBytesRead;
 }
 
@@ -1285,6 +1313,10 @@ typedef enum {
         return YES;
     }
 
+    if( _assetRepresentation != nil ){
+        return _assetRepresentationRemainSize != 0 ? YES : NO;
+    }
+    
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wcovered-switch-default"
     switch (self.inputStream.streamStatus) {
@@ -1301,6 +1333,17 @@ typedef enum {
             return NO;
     }
 #pragma clang diagnostic pop
+}
+
+- (ALAssetRepresentation*)assetRepresentation
+{
+    return _assetRepresentation;
+}
+
+- (void) setAssetRepresentation:(ALAssetRepresentation*)assetRepresentation
+{
+    _assetRepresentation = assetRepresentation;
+    _assetRepresentationRemainSize = [assetRepresentation size];
 }
 
 - (NSInteger)read:(uint8_t *)buffer
@@ -1321,17 +1364,31 @@ typedef enum {
     if (_phase == AFBodyPhase) {
         NSInteger numberOfBytesRead = 0;
 
-        numberOfBytesRead = [self.inputStream read:&buffer[totalNumberOfBytesRead] maxLength:(length - (NSUInteger)totalNumberOfBytesRead)];
-        if (numberOfBytesRead == -1) {
-            return -1;
-        } else {
-            totalNumberOfBytesRead += numberOfBytesRead;
-
-            if ([self.inputStream streamStatus] >= NSStreamStatusAtEnd) {
+        if( _assetRepresentation != nil ){
+            long long offset = [_assetRepresentation size] - _phaseReadOffset;
+            long long readsize = MIN(length,_assetRepresentationRemainSize);
+            
+            NSError* error = nil;
+            [_assetRepresentation getBytes:buffer fromOffset:offset length:readsize error:&error];
+            _assetRepresentationRemainSize -= readsize;
+            
+            numberOfBytesRead += readsize;
+            
+            if( _assetRepresentationRemainSize == 0){
                 [self transitionToNextPhase];
             }
+        }else{
+            numberOfBytesRead = [self.inputStream read:&buffer[totalNumberOfBytesRead] maxLength:(length - (NSUInteger)totalNumberOfBytesRead)];
+            if (numberOfBytesRead == -1) {
+                return -1;
+            } else {
+                totalNumberOfBytesRead += numberOfBytesRead;
+
+                if ([self.inputStream streamStatus] >= NSStreamStatusAtEnd) {
+                    [self transitionToNextPhase];
+                }
+            }
         }
-    }
 
     if (_phase == AFFinalBoundaryPhase) {
         NSData *closingBoundaryData = ([self hasFinalBoundary] ? [AFMultipartFormFinalBoundary(self.boundary) dataUsingEncoding:self.stringEncoding] : [NSData data]);
